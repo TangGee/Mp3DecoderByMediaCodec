@@ -7,7 +7,6 @@ import android.media.AudioTrack;
 import android.media.MediaCodec;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
-import android.os.Environment;
 import android.text.TextUtils;
 import android.util.Log;
 
@@ -19,7 +18,7 @@ public class DecoderTest {
     public static void test() throws IOException {
 
         MediaExtractor extractor = new MediaExtractor();
-        String path = Environment.getExternalStorageState()+"/jiangzhende.mp3";
+        String path = "/sdcard/jiangzhende.mp3";
         extractor.setDataSource(path);
 
         MediaFormat selectFormat = null;
@@ -62,7 +61,15 @@ public class DecoderTest {
         Mp3Decoder mp3Decoder = new Mp3Decoder(extractor, mediaCodec, new Mp3Decoder.Mp3DecoderListener() {
             @Override
             public void onDecodData(ByteBuffer buffer, MediaCodec.BufferInfo bufferInfo) {
-                audioTrack.write(buffer.array(),bufferInfo.offset, bufferInfo.size);
+                if (buffer.hasArray()) {
+                    audioTrack.write(buffer.array(),bufferInfo.offset, bufferInfo.size);
+                } else{
+                    if (useBuffer==null || useBuffer.length<bufferInfo.size) {
+                        useBuffer = new byte[bufferInfo.size];
+                    }
+                    buffer.get(useBuffer,0,bufferInfo.size);
+                    audioTrack.write(useBuffer,0,bufferInfo.size);
+                }
             }
 
             @Override
@@ -79,4 +86,6 @@ public class DecoderTest {
         return TextUtils.equals(mediaFormat.getString(MediaFormat.KEY_MIME),
                 MediaFormat.MIMETYPE_AUDIO_MPEG);
     }
+
+    private static byte[] useBuffer;
 }
