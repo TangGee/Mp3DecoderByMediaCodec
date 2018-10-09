@@ -69,11 +69,23 @@ public class DecoderTest {
                     }
                     buffer.get(useBuffer,0,bufferInfo.size);
                     audioTrack.write(useBuffer,0,bufferInfo.size);
+                    if (useBuffer[0]!=0) {
+                        StringBuilder builder = new StringBuilder();
+                        for (int i =0;i<10;i++) {
+                            builder.append((int) useBuffer[i]);
+                        }
+                        Log.e("AAAA",builder.toString());
+                    }
                 }
             }
 
             @Override
             public void onDataFormatChange(MediaFormat newFormat) {
+            }
+
+            @Override
+            public void onDecodeEndOfFrame(long pts) {
+
             }
         });
         audioTrack.play();

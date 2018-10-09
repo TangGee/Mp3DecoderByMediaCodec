@@ -44,6 +44,13 @@ public class Mp3Decoder {
                     mListener.onDataFormatChange(newFormat);
                 }
             }
+
+            @Override
+            public void onDecodeEndOfStream(MediaCodec.BufferInfo bufferInfo) {
+                if (mListener!=null) {
+                    mListener.onDecodeEndOfFrame(bufferInfo.presentationTimeUs);
+                }
+            }
         });
     }
 
@@ -71,6 +78,7 @@ public class Mp3Decoder {
         }
         // seekto 0 and pause
         mDecodThread.stopDecord();
+        mState = STATE_PAUSE;
     }
 
     public void pause(){
@@ -107,6 +115,7 @@ public class Mp3Decoder {
     public interface Mp3DecoderListener {
         void onDecodData(ByteBuffer buffer, MediaCodec.BufferInfo bufferInfo);
         void onDataFormatChange(MediaFormat newFormat);
+        void onDecodeEndOfFrame(long pts);
     }
 
 
@@ -116,17 +125,17 @@ public class Mp3Decoder {
         private final MediaCodec mMediaCodec;
         private final DecoderListener mDecoderListener;
 
-        private Object mPauseLock = new Object();
+        private final Object mPauseLock = new Object();
 
         private volatile boolean mLoop = false;
         private volatile AtomicLong mSeekTime = new AtomicLong(-1);
         private volatile int mState = STATE_IDLE;
 
 
-        public static final int STATE_IDLE = 0;
-        public static final int STATE_RUNNING = 1;
-        public static final int STATE_PAUSE = 2;
-        public static final int STATE_RELEASED =3;
+        private static final int STATE_IDLE = 0;
+        private static final int STATE_RUNNING = 1;
+        private static final int STATE_PAUSE = 2;
+        private static final int STATE_RELEASED =3;
 
 
         @Override
@@ -135,9 +144,10 @@ public class Mp3Decoder {
                 throw new IllegalStateException("start mState error: mState="+ mState);
             }
             super.start();
+            mState = STATE_RUNNING;
         }
 
-        public void resumeDecord() {
+        private void resumeDecord() {
             if (mState == STATE_IDLE || mState == STATE_RELEASED) {
                 throw new IllegalStateException("start mState error: mState="+ mState);
             } else {
@@ -148,7 +158,7 @@ public class Mp3Decoder {
             }
         }
 
-        public void pauseDecord() {
+        private void pauseDecord() {
             if (mState == STATE_RELEASED || mState == STATE_IDLE) {
                 throw new IllegalStateException("pauseDecord mState error: mState="+ mState);
             }
@@ -157,7 +167,7 @@ public class Mp3Decoder {
             }
         }
 
-        public void stopDecord() {
+        private void stopDecord() {
             if (mState == STATE_RELEASED || mState == STATE_IDLE) {
                 throw new IllegalStateException("pauseDecord mState error: mState="+ mState);
             }
@@ -178,6 +188,7 @@ public class Mp3Decoder {
         private boolean endAsync() {
             if (mLoop) {
                 mMediaExtractor.seekTo(0,SEEK_TO_PREVIOUS_SYNC);
+                mMediaCodec.flush();
                 return false;
             } else {
                 releaseAsync();
@@ -185,7 +196,7 @@ public class Mp3Decoder {
             }
         }
 
-        public void seekTo(long millis) {
+        private void seekTo(long millis) {
             mSeekTime.set(millis);
         }
 
@@ -218,19 +229,24 @@ public class Mp3Decoder {
                 }
 
                 long seekTime;
-                if ((seekTime =mSeekTime.getAndSet(-1))>0){
+                if ((seekTime =mSeekTime.getAndSet(-1))>=0){
                     mMediaExtractor.seekTo(seekTime,SEEK_TO_PREVIOUS_SYNC);
+                    mMediaCodec.flush();
                 }
 
                 int length;
                 if((length = mMediaExtractor.readSampleData(inputBuffer,0))>0) {
                     long pts = mMediaExtractor.getSampleTime();
-                    int ret = decodeData(inputBuffer,0,length,bufferInfo,pts);
+                    int sampleFlags = mMediaExtractor.getSampleFlags() >0 ? mMediaExtractor.getSampleFlags():0;
+                    int ret = decodeData(inputBuffer,sampleFlags,length,bufferInfo,pts);
                     if (ret == MediaCodec.BUFFER_FLAG_END_OF_STREAM){
+                        mDecoderListener.onDecodeEndOfStream(bufferInfo);
                         if (endAsync()) break;
                     }
                     mMediaExtractor.advance();
                 } else {
+                    decodeData(null,MediaCodec.BUFFER_FLAG_END_OF_STREAM,0,bufferInfo,0);
+                    mDecoderListener.onDecodeEndOfStream(bufferInfo);
                     //读取完成
                    if (endAsync()) {
                        break;
@@ -239,24 +255,26 @@ public class Mp3Decoder {
             }
         }
 
-        public void releaseDecord() {
+        private void releaseDecord() {
         }
 
         interface DecoderListener {
             void onDecodData(ByteBuffer buffer, MediaCodec.BufferInfo bufferInfo);
-
             void onDataFormatChange(MediaFormat newFormat);
+            void onDecodeEndOfStream(MediaCodec.BufferInfo bufferInfo);
         }
 
-        private int decodeData(ByteBuffer data, int offset, int length,
+        private int decodeData(ByteBuffer data, int sampleFlags, int length,
                                MediaCodec.BufferInfo bufferInfo /*output*/,long pts) {
             MediaCodec codec = mMediaCodec;
             DecoderListener listener = mDecoderListener;
             int inputBufferId = codec.dequeueInputBuffer(5000);
             if (inputBufferId >= 0) {
                 ByteBuffer inputBuffer = codec.getInputBuffer(inputBufferId);
-                inputBuffer.put(data);
-                codec.queueInputBuffer(inputBufferId,offset,length,pts,0);
+                if (data!=null &&inputBuffer!=null) {
+                    inputBuffer.put(data);  //最后一帧data是空的
+                }
+                codec.queueInputBuffer(inputBufferId,0,length,pts,sampleFlags);
             }
             int outputBufferId = codec.dequeueOutputBuffer(bufferInfo,5000);
             if (outputBufferId >= 0) {
